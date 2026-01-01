@@ -27,6 +27,24 @@ class MessagesReceiver : BroadcastReceiver(), KoinComponent {
         val firstMessage = messages.first()
 //        val text = messages.joinToString(separator = "") { it.displayMessageBody }
 
+        // De-duplicate using timestamp + address + body hash
+        val messageKey = "${firstMessage.timestampMillis}_${firstMessage.displayOriginatingAddress}_${messages.joinToString("") { it.displayMessageBody }.hashCode()}"
+        val now = System.currentTimeMillis()
+        
+        synchronized(processedMessages) {
+            // Clean up old entries
+            processedMessages.entries.removeIf { now - it.value > DUPLICATE_WINDOW_MS }
+            
+            // Check if already processed
+            if (processedMessages.containsKey(messageKey)) {
+                Log.d(TAG, "Skipping duplicate SMS from ${firstMessage.displayOriginatingAddress}")
+                return
+            }
+            
+            // Mark as processed
+            processedMessages[messageKey] = now
+        }
+
         val inboxMessage = when (isDataMessage) {
             false -> InboxMessage.Text(
                 messages.joinToString(separator = "") { it.displayMessageBody },
@@ -51,8 +69,10 @@ class MessagesReceiver : BroadcastReceiver(), KoinComponent {
 
     companion object {
         private const val TAG = "MessagesReceiver"
+        private const val DUPLICATE_WINDOW_MS = 60000L // 1 minute
 
         private val INSTANCE: MessagesReceiver by lazy { MessagesReceiver() }
+        private val processedMessages = mutableMapOf<String, Long>()
 
         fun register(context: Context) {
             val textFilter = IntentFilter().apply {
